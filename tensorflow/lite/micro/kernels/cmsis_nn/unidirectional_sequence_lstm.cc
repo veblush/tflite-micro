@@ -382,6 +382,7 @@ TfLiteStatus CMSIS_NN_EvalInteger16x8_16Lstm(
   if (status != ARM_CMSIS_NN_SUCCESS) return kTfLiteError;
 #else
   if (params.time_major) {
+    int16_t* step_hidden_in = hidden_state;
     for (int t = 0; t < params.time_steps; t++) {
       const int16_t* data_in =
           input + (t * params.batch_size * params.input_size);
@@ -389,32 +390,36 @@ TfLiteStatus CMSIS_NN_EvalInteger16x8_16Lstm(
           output + (t * params.batch_size * params.hidden_size);
 
       arm_cmsis_nn_status status = arm_nn_lstm_step_s16(
-          data_in, hidden_state, hidden_out, &params, &cmsis_buffers, 1);
+          data_in, step_hidden_in, hidden_out, &params, &cmsis_buffers, 1);
       if (status != ARM_CMSIS_NN_SUCCESS) return kTfLiteError;
-
-      // Update hidden state for next step
-      std::copy_n(hidden_out, params.batch_size * params.hidden_size,
+      step_hidden_in = hidden_out;
+    }
+    if (params.time_steps > 0) {
+      std::copy_n(step_hidden_in, params.batch_size * params.hidden_size,
                   hidden_state);
     }
   } else {
     cmsis_nn_lstm_params step_params = params;
     step_params.batch_size = 1;
     for (int b = 0; b < params.batch_size; b++) {
+      int16_t* step_hidden_in = hidden_state + b * params.hidden_size;
+      cmsis_buffers.cell_state = cell_state + b * params.hidden_size;
+
       for (int t = 0; t < params.time_steps; t++) {
         const int16_t* data_in =
             input + (b * params.time_steps + t) * params.input_size;
         int16_t* hidden_out =
             output + (b * params.time_steps + t) * params.hidden_size;
-        int16_t* current_hidden = hidden_state + b * params.hidden_size;
-        cmsis_buffers.cell_state = cell_state + b * params.hidden_size;
 
         arm_cmsis_nn_status status =
-            arm_nn_lstm_step_s16(data_in, current_hidden, hidden_out,
+            arm_nn_lstm_step_s16(data_in, step_hidden_in, hidden_out,
                                  &step_params, &cmsis_buffers, 1);
         if (status != ARM_CMSIS_NN_SUCCESS) return kTfLiteError;
-
-        // Update hidden state for next step
-        std::copy_n(hidden_out, params.hidden_size, current_hidden);
+        step_hidden_in = hidden_out;
+      }
+      if (params.time_steps > 0) {
+        std::copy_n(step_hidden_in, params.hidden_size,
+                    hidden_state + b * params.hidden_size);
       }
     }
   }
